@@ -1,175 +1,141 @@
-{% extends "base.html" %}
-{% block title %}課題を追加 — TaskFlow{% endblock %}
+from flask import Flask, render_template, request, redirect, url_for, session, flash
+import sqlite3
+import os
+from datetime import datetime
 
-{% block extra_styles %}
-.app-layout {
-    min-height: 100vh;
-    display: grid;
-    grid-template-rows: auto 1fr;
-}
-.header {
-    background: var(--ink);
-    padding: 0 2.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 60px;
-    position: sticky;
-    top: 0;
-    z-index: 100;
-}
-.brand {
-    font-family: 'Syne', sans-serif;
-    font-weight: 800;
-    font-size: 1.25rem;
-    color: white;
-    letter-spacing: -0.02em;
-}
-.brand span { color: var(--accent); }
+app = Flask(__name__)
+app.secret_key = 'taskapp-secret-key-2024'
 
-.main {
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding: 4rem 2rem;
-}
+DB_PATH = 'tasks.db'
 
-.add-box {
-    width: 100%;
-    max-width: 520px;
-    background: white;
-    border: 1px solid var(--border);
-    padding: 2.5rem;
-    animation: fadeUp 0.4s ease;
-}
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-@keyframes fadeUp {
-    from { opacity: 0; transform: translateY(16px); }
-    to { opacity: 1; transform: translateY(0); }
-}
+def init_db():
+    conn = get_db()
+    conn.executescript('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            deadline TEXT,
+            completed INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+        INSERT OR IGNORE INTO users (username, password) VALUES ('admin', 'password');
+        INSERT OR IGNORE INTO users (username, password) VALUES ('user', '1234');
+    ''')
+    conn.commit()
+    conn.close()
 
-.back-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    color: var(--muted);
-    text-decoration: none;
-    font-size: 0.875rem;
-    margin-bottom: 2rem;
-    transition: color 0.2s;
-}
-.back-link:hover { color: var(--ink); }
+@app.route('/')
+def index():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    return redirect(url_for('tasks'))
 
-.add-title {
-    font-family: 'Syne', sans-serif;
-    font-weight: 700;
-    font-size: 1.75rem;
-    color: var(--ink);
-    margin-bottom: 0.4rem;
-}
-.add-sub {
-    color: var(--muted);
-    font-size: 0.875rem;
-    margin-bottom: 2rem;
-}
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        conn = get_db()
+        user = conn.execute(
+            'SELECT * FROM users WHERE username = ? AND password = ?',
+            (username, password)
+        ).fetchone()
+        conn.close()
+        if user:
+            session['user_id'] = user['id']
+            session['username'] = user['username']
+            return redirect(url_for('tasks'))
+        else:
+            flash('ユーザー名またはパスワードが違います', 'error')
+    return render_template('login.html')
 
-.form-group {
-    margin-bottom: 1.5rem;
-}
-.form-group label {
-    display: block;
-    font-size: 0.78rem;
-    font-weight: 500;
-    color: var(--muted);
-    margin-bottom: 0.5rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-}
-.form-group input {
-    width: 100%;
-    padding: 0.875rem 1rem;
-    background: var(--paper);
-    border: 1.5px solid var(--border);
-    font-family: 'Noto Sans JP', sans-serif;
-    font-size: 0.95rem;
-    color: var(--ink);
-    outline: none;
-    transition: border-color 0.2s, background 0.2s;
-}
-.form-group input:focus {
-    border-color: var(--ink);
-    background: white;
-}
-.form-group .hint {
-    font-size: 0.75rem;
-    color: var(--muted);
-    margin-top: 0.4rem;
-}
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
-.btn-row {
-    display: flex;
-    gap: 0.75rem;
-    margin-top: 0.5rem;
-}
+@app.route('/tasks')
+def tasks():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    conn = get_db()
+    all_tasks = conn.execute(
+        'SELECT * FROM tasks WHERE user_id = ? ORDER BY deadline ASC, created_at DESC',
+        (session['user_id'],)
+    ).fetchall()
+    conn.close()
+    total = len(all_tasks)
+    completed = sum(1 for t in all_tasks if t['completed'])
+    progress = int((completed / total * 100) if total > 0 else 0)
+    today = datetime.now().strftime('%Y-%m-%d')
+    return render_template('tasks.html', tasks=all_tasks, progress=progress,
+                           completed=completed, total=total, today=today)
 
-.btn-submit {
-    flex: 1;
-    padding: 1rem;
-    background: var(--ink);
-    color: white;
-    border: none;
-    font-family: 'Syne', sans-serif;
-    font-size: 0.95rem;
-    font-weight: 600;
-    cursor: pointer;
-    letter-spacing: 0.02em;
-    transition: background 0.2s;
-}
-.btn-submit:hover { background: var(--accent); }
+@app.route('/tasks/add', methods=['GET', 'POST'])
+def add_task():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    if request.method == 'POST':
+        title = request.form.get('title', '').strip()
+        deadline = request.form.get('deadline', '').strip()
+        if not title:
+            flash('課題名を入力してください', 'error')
+        else:
+            conn = get_db()
+            conn.execute(
+                'INSERT INTO tasks (user_id, title, deadline) VALUES (?, ?, ?)',
+                (session['user_id'], title, deadline or None)
+            )
+            conn.commit()
+            conn.close()
+            flash('課題を追加しました', 'success')
+            return redirect(url_for('tasks'))
+    return render_template('add_task.html')
 
-.btn-cancel {
-    padding: 1rem 1.5rem;
-    background: transparent;
-    border: 1.5px solid var(--border);
-    color: var(--muted);
-    font-family: 'Noto Sans JP', sans-serif;
-    font-size: 0.9rem;
-    cursor: pointer;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    transition: all 0.2s;
-}
-.btn-cancel:hover { border-color: var(--ink); color: var(--ink); }
-{% endblock %}
+@app.route('/tasks/<int:task_id>/toggle', methods=['POST'])
+def toggle_task(task_id):
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    conn = get_db()
+    task = conn.execute(
+        'SELECT * FROM tasks WHERE id = ? AND user_id = ?',
+        (task_id, session['user_id'])
+    ).fetchone()
+    if task:
+        conn.execute(
+            'UPDATE tasks SET completed = ? WHERE id = ?',
+            (0 if task['completed'] else 1, task_id)
+        )
+        conn.commit()
+    conn.close()
+    return redirect(url_for('tasks'))
 
-{% block content %}
-<div class="app-layout">
-    <header class="header">
-        <div class="brand">Task<span>Flow</span></div>
-    </header>
-    <main class="main">
-        <div class="add-box">
-            <a href="{{ url_for('tasks') }}" class="back-link">← 一覧に戻る</a>
-            <h1 class="add-title">課題を追加</h1>
-            <p class="add-sub">新しい課題の名前と締切日を入力してください</p>
+@app.route('/tasks/<int:task_id>/delete', methods=['POST'])
+def delete_task(task_id):
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    conn = get_db()
+    conn.execute(
+        'DELETE FROM tasks WHERE id = ? AND user_id = ?',
+        (task_id, session['user_id'])
+    )
+    conn.commit()
+    conn.close()
+    flash('課題を削除しました', 'success')
+    return redirect(url_for('tasks'))
 
-            <form method="POST">
-                <div class="form-group">
-                    <label>課題名 <span style="color:var(--accent)">*</span></label>
-                    <input type="text" name="title" placeholder="例: レポートを提出する" required autofocus>
-                </div>
-                <div class="form-group">
-                    <label>締切日</label>
-                    <input type="date" name="deadline">
-                    <div class="hint">未入力の場合は「締切なし」として登録されます</div>
-                </div>
-                <div class="btn-row">
-                    <button type="submit" class="btn-submit">追加する →</button>
-                    <a href="{{ url_for('tasks') }}" class="btn-cancel">キャンセル</a>
-                </div>
-            </form>
-        </div>
-    </main>
-</div>
-{% endblock %}
+if __name__ == '__main__':
+    init_db()
+    app.run(debug=True)
