@@ -1,76 +1,102 @@
 import sys
 import csv
-import os
 
-DATA_FILE = "movie.csv"
+DATA_FILE = "movies.csv"
 
-def load_movies():
-    movies = []
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
+def init_file():
+    """movies.csv が存在しない場合は、新規作成する"""
+    try:
+        with open(DATA_FILE, "a", encoding="utf-8") as f:
+            pass
+    except IOError:
+        print(f"エラー: {DATA_FILE} の初期化に失敗しました。")
+
+def load_data():
+    """movies.csv から既存データを読み込む"""
+    data = {}
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
             for row in reader:
-                movies.append(row)
-    return movies
+                if not row or row[0].strip().lower() == "title":
+                    continue
+                if len(row) >= 4:
+                    data[row[0].strip()] = {
+                        "genre": row[1].strip(),
+                        "rating": row[2].strip(),
+                        "comment": row[3].strip()
+                    }
+    except FileNotFoundError:
+        pass
 
-def save_movies(movies):
+    return data
+
+def save_data(data):
+    """データを movies.csv に保存する"""
     with open(DATA_FILE, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["title", "genre", "rate"])
-        writer.writeheader()
-        writer.writerows(movies)
+        writer = csv.writer(f)
+        writer.writerow(["title", "genre", "rating", "comment"])
+        for title, info in data.items():
+            writer.writerow([
+                title,
+                info["genre"],
+                info["rating"],
+                info["comment"]
+            ])
 
-def add_movie(title, genre, rate):
-    movies = load_movies()
-    movies.append({"title": title, "genre": genre, "rate": rate})
-    save_movies(movies)
-    print("映画を追加しました")
+def main():
+    init_file()
 
-def list_movies():
-    movies = load_movies()
-    for movie in movies:
-        print(f'{movie["title"]} / {movie["genre"]} / 評価:{movie["rate"]}')
+    args = sys.argv[2:]
+    if len(sys.argv) < 2 or sys.argv[1].lower() != "add":
+        print("使い方:")
+        print("  python movie.py add <title> [ジャンル] [評価]")
+        print("  python movie.py add [title] <ジャンル> <評価>")
+        return
 
-def search_movie(keyword):
-    movies = load_movies()
-    for movie in movies:
-        if keyword in movie["title"]:
-            print(f'{movie["title"]} / {movie["genre"]} / 評価:{movie["rate"]}')
+    data = load_data()
 
-def delete_movie(title):
-    movies = load_movies()
-    movies = [movie for movie in movies if movie["title"] != title]
-    save_movies(movies)
-    print("映画を削除しました")
+    title = ""
+    genre = ""
+    rating = ""
+    comment = ""
 
-def edit_movie(title, new_rate):
-    movies = load_movies()
-    for movie in movies:
-        if movie["title"] == title:
-            movie["rate"] = new_rate
-    save_movies(movies)
-    print("映画を編集しました")
+    if len(args) >= 3:
+        title = args[0].strip()
+        genre = args[1].strip()
+        rating = args[2].strip()
+    elif len(args) == 1:
+        title = args[0].strip()
+    try:
+        if not title:
+            title = input("映画タイトルを入力してください：").strip()
+        if not genre:
+            genre = input(f"映画「{title}」のジャンルを入力してください：").strip()
+        if not rating:
+            rating = input(f"映画「{title}」の評価を入力してください（1～5）：").strip()
 
-def sort_movies():
-    movies = load_movies()
-    movies.sort(key=lambda x: int(x["rate"]), reverse=True)
-    for movie in movies:
-        print(f'{movie["title"]} / {movie["genre"]} / 評価:{movie["rate"]}')
+        comment = input(f"映画「{title}」の感想を入力してください：").strip()
 
-args = sys.argv
+    except (KeyboardInterrupt, EOFError):
+        print("\n入力をキャンセルしました。")
+        return
 
-if len(args) < 2:
-    print("コマンドを入力してください")
-elif args[1] == "add":
-    add_movie(args[2], args[3], args[4])
-elif args[1] == "list":
-    list_movies()
-elif args[1] == "search":
-    search_movie(args[2])
-elif args[1] == "delete":
-    delete_movie(args[2])
-elif args[1] == "edit":
-    edit_movie(args[2], args[3])
-elif args[1] == "sort":
-    sort_movies()
-else:
-    print("不明なコマンドです")
+    if not title or not genre or not rating:
+        print("エラー：タイトル、ジャンル、評価を入力する必要があります。")
+        return
+
+    if title in data:
+        print(f"エラー：'{title}' は既に登録されています。")
+        return
+
+    data[title] = {
+        "genre": genre,
+        "rating": rating,
+        "comment": comment
+    }
+
+    save_data(data)
+    print(f"追加した（合計{len(data)}件)")
+
+if__name__ == "__main__":
+    main()
